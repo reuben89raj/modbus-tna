@@ -554,7 +554,7 @@ control SwitchEgress(
                     if(hdr.tcp.dstPort == 502) {
                         compute_funcClass_Id();
 
-                        bit<32> arrivalTime = (bit<32>)standard_metadata.ingress_global_timestamp;
+                        bit<32> arrivalTime = (bit<32>)ig_md.ingress_mac_tstamp;
                         bit<32> prevArrTime;
                         prevArr.read(prevArrTime, (bit<32>)fClass_id);
                         prevArr.write((bit<32>)fClass_id, arrivalTime);
