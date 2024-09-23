@@ -641,6 +641,27 @@ control SwitchEgress(
         inout egress_intrinsic_metadata_for_deparser_t ig_intr_dprs_md,
         inout egress_intrinsic_metadata_for_output_port_t eg_intr_oport_md) {
     apply {
+
+        if(hdr.ipv4.totalLen <= ((bit<16>)(4*hdr.ipv4.ihl) + (bit<16>)(4*hdr.tcp.dataOffset))){
+                        nop();
+                    } else if(hdr.modbus.isValid() && (hdr.tcp.srcPort == 502 || hdr.tcp.dstPort == 502)) { // Check if Modbus packet
+                        
+                        bit<16> totalLenValue = (bit<16>)hdr.ipv4.totalLen;
+                        bit<16> ihlValue = 4 * (bit<16>)hdr.ipv4.ihl;
+                        bit<16> dataOffsetValue = 4 * (bit<16>)hdr.tcp.dataOffset;
+                        packet_length = eg_intr_md.pkt_length;
+
+                        mbapLen = (bit<16>)packet_length - (ihlValue + dataOffsetValue + 20);
+
+                        //log_msg("ipv4-totalLen: {}, ihlValue: {}, dataOffsetValue:{}, mbapLen: {},packet-Length: {}", {totalLenValue, ihlValue, dataOffsetValue, mbapLen, packet_length});
+
+                        // Length check
+                        if (mbapLen == hdr.modbus.len) {
+                            if(!modbusCheck.apply().hit) {
+                                drop();
+                                log_msg("Dropping due to invalid FC");
+			                }
+                        }
     }
 }
 
