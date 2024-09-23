@@ -129,21 +129,7 @@ struct paired_32bit {
 }
 
 struct ig_metadata_t {
-    bool pkt_type;
-    
-    bit<32> tmp_1;
-    bit<32> tmp_2;
-    bit<32> tmp_3;
-    bit<32> total_hdr_len_bytes; 
-    bit<32> total_body_len_bytes; 
-    
-    bit<32> expected_ack;
-    bit<32> pkt_signature;
-    
-    bit<16> tx_fc_id;
-    bit<16> fClass_id;
-    
-    bit<32> table_read;
+    bit<32> ingress_mac_tstamp; // Field for the ingress timestamp
 }
 
 struct eg_metadata_t {
@@ -370,26 +356,7 @@ control SwitchIngress(
     action nop() {
     }
 
-    // for checking rate of arrival -
-    Hash<bit<16>>(HashAlgorithm_t.CRC16) crc16_hash;
-
-    action compute_funcClass_Id() {
-        // Compute the hash and store it in fClass_id
-        fClass_id = crc16_hash.get({
-            hdr.ipv4.src_addr,         // source IP address
-            hdr.ipv4.dst_addr,         // destination IP address
-            hdr.tcp.dst_port,          // destination TCP port
-            hdr.modbus.functionCode    // Modbus function code
-        });
-    }
-
-    action compute_tx_fc_id() {
-        // Compute the hash and store it in fClass_id
-        tx_fc_id = crc16_hash.get({
-            hdr.modbus.tx_id,          // Modbus Transaction ID
-            hdr.modbus.functionCode    // Modbus function code
-        });
-    }
+    
 
     action ipv4_forward(PortId_t port) {
         ig_intr_tm_md.ucast_egress_port = port;
@@ -466,9 +433,8 @@ control SwitchIngress(
          key = { hdr.modbus.functionCode: exact;
                 }
          actions = {
-		setPort;
+		nop;
 		drop;
-		NoAction;
          }
          size = 1024;
          default_action = drop;
@@ -476,121 +442,18 @@ control SwitchIngress(
 
 
      apply {
+         ig_md.ingress_mac_tstamp = ig_intr_md.ingress_mac_tstamp[31:0]
+
          if (hdr.ipv4.isValid()) {
-         ipv4_lpm.apply();
-         //check_ports.apply();
+             ipv4_lpm.apply();
 
-           // valid flow check
-          if(!(flowOut.apply().hit || flowIn.apply().hit )) {
-                
-                drop();
-                log_msg("Dropping due to invalid Flow");
-          }
-          else {
-            if (hdr.tcp.isValid()) {
-
-                // Check if only TCP ;
-                if(hdr.ipv4.totalLen <= ((bit<16>)(4*hdr.ipv4.ihl) + (bit<16>)(4*hdr.tcp.dataOffset))){
-                        nop();
-                    } else if(hdr.modbus.isValid() && (hdr.tcp.srcPort == 502 || hdr.tcp.dstPort == 502)) { // Check if Modbus packet
-                        
-                        bit<16> totalLenValue = (bit<16>)hdr.ipv4.totalLen;
-                        bit<16> ihlValue = 4 * (bit<16>)hdr.ipv4.ihl;
-                        bit<16> dataOffsetValue = 4 * (bit<16>)hdr.tcp.dataOffset;
-                        packet_length = standard_metadata.packet_length;
-
-                        mbapLen = (bit<16>)packet_length - (ihlValue + dataOffsetValue + 20);
-
-                        //log_msg("ipv4-totalLen: {}, ihlValue: {}, dataOffsetValue:{}, mbapLen: {},packet-Length: {}", {totalLenValue, ihlValue, dataOffsetValue, mbapLen, packet_length});
-
-                        // Length check
-                        if (mbapLen == hdr.modbus.len) {
-                            if(!modbusCheck.apply().hit) {
-                                drop();
-                                log_msg("Dropping due to invalid FC");
-			                }
-			                // Check if msg is Modbus Request. If so, check arrival rate
-                            if(hdr.tcp.dstPort == 502) {
-                                compute_funcClass_Id();
-
-                                bit<32> arrivalTime = (bit<32>)standard_metadata.ingress_global_timestamp;
-                                bit<32> prevArrTime;
-                                prevArr.read(prevArrTime, (bit<32>)fClass_id);
-                                prevArr.write((bit<32>)fClass_id, arrivalTime);
-
-                                compute_tx_fc_id();
-                                txFcStatus.write((bit<32>)tx_fc_id, arrivalTime);
-
-                                diff =  arrivalTime - prevArrTime;
-
-                                if (diff < UPPERLIMIT) {
-                                    drop();
-                                }
-
-                                if (diff > UPPERLIMIT && diff < LOWERLIMIT){ //EWMA
-                                    bit<32> intervalStartVal;
-                                    intervalStart.read(intervalStartVal, (bit<32>)fClass_id);
-
-                                    if (arrivalTime - intervalStartVal > INTERVAL) {
-                                        intervalStart.write((bit<32>)fClass_id, arrivalTime);
-                                        intervalCount.write(fClass_id, 1);
-                                    } else {
-                                        //intervalStart.write((bit<32>)fClass_id, arrivalTime);
-                                        bit<32> intervalCountVal;
-                                        
-                                        intervalCount.read(intervalCountVal, (bit<32>)fClass_id);
-                                        intervalCount.write((bit<32>)fClass_id, intervalCountVal + 1);
-                    
-                                        // read previous Threshold from register 
-                                        bit<32> prevThreshold;
-                                        currThreshold.read(prevThreshold, (bit<32>)fClass_id);
-
-                                        // calculate new Threshold
-                                        // EWMA
-                                        tDiff = ((int<32>) intervalCountVal) - ((int<32>) prevThreshold);
-                                        tDiff = tDiff >> 4;
-                                        newThreshold = prevThreshold + (bit<32>) tDiff;
-
-                                        log_msg("newThreshold = {}, prevThreshold = {}, intervalCountVal = {}", {newThreshold, prevThreshold, intervalCountVal});
-
-                                        currThreshold.write((bit<32>)fClass_id, newThreshold);
-
-                                        if (intervalCountVal + 1 > newThreshold) {
-                                            drop();
-                                        }
-                                    }
-                                }
-                                    
-                                } else if(hdr.tcp.srcPort == 502) {
-                                    // Add check for Modbus Response
-                                    compute_tx_fc_id();
-                                    bit<32> current_timestamp = (bit<32>)standard_metadata.ingress_global_timestamp;
-                                    bit<32> req_timestamp;
-                                    txFcStatus.read(req_timestamp, (bit<32>)tx_fc_id);
-
-                                    log_msg("current_timestamp: {}, req_timestamp: {}, resp_threshold:{}", {current_timestamp, req_timestamp, resp_threshold});
-                                    if((current_timestamp - req_timestamp) > resp_threshold){
-                                        drop();
-                                        log_msg("Dropping due to delayed/unsolicited response");
-                                    } else {
-                                        nop();
-                                    }
-                                }
-                            } else {
-                                // Invalid length, so drop
-                                log_msg("Dropping due to invalid length");
-				                drop();
-
-                            }
-                        }
-                    }
-
-            else {
-                drop();
-            }
+             // valid flow and function code check
+             if(!(flowOut.apply().hit || flowIn.apply().hit || modbusCheck.apply().hit)) {
+                drop();   
+             }
+         }
+          
         }
-        }
-     }
 }
 
 
@@ -605,10 +468,9 @@ control SwitchIngressDeparser(
     
     apply {        
         pkt.emit(hdr.ethernet);
-        pkt.emit(hdr.report);
         pkt.emit(hdr.ipv4);
         pkt.emit(hdr.tcp);
-        pkt.emit(hdr.udp);
+        pkt.emit(hdr.modbus)
     }
 }
 
@@ -617,6 +479,7 @@ parser SwitchEgressParser(
         out header_t hdr,
         out eg_metadata_t eg_md,
         out egress_intrinsic_metadata_t eg_intr_md) {
+
     state start {
         pkt.extract(eg_intr_md);
         transition accept;
@@ -636,32 +499,132 @@ control SwitchEgressDeparser(
 control SwitchEgress(
         inout header_t hdr,
         inout eg_metadata_t eg_md,
+        inout ig_metadata_t ig_md,
         in egress_intrinsic_metadata_t eg_intr_md,
         in egress_intrinsic_metadata_from_parser_t eg_intr_md_from_prsr,
         inout egress_intrinsic_metadata_for_deparser_t ig_intr_dprs_md,
         inout egress_intrinsic_metadata_for_output_port_t eg_intr_oport_md) {
+
     apply {
+        #define packet_length = eg_intr_md.pkt_length;
 
-        if(hdr.ipv4.totalLen <= ((bit<16>)(4*hdr.ipv4.ihl) + (bit<16>)(4*hdr.tcp.dataOffset))){
-                        nop();
-                    } else if(hdr.modbus.isValid() && (hdr.tcp.srcPort == 502 || hdr.tcp.dstPort == 502)) { // Check if Modbus packet
-                        
-                        bit<16> totalLenValue = (bit<16>)hdr.ipv4.totalLen;
-                        bit<16> ihlValue = 4 * (bit<16>)hdr.ipv4.ihl;
-                        bit<16> dataOffsetValue = 4 * (bit<16>)hdr.tcp.dataOffset;
-                        packet_length = eg_intr_md.pkt_length;
+        // for checking rate of arrival -
+        Hash<bit<16>>(HashAlgorithm_t.CRC16) crc16_hash;
 
-                        mbapLen = (bit<16>)packet_length - (ihlValue + dataOffsetValue + 20);
+        action compute_funcClass_Id() {
+            // Compute the hash and store it in fClass_id
+            fClass_id = crc16_hash.get({
+                hdr.ipv4.src_addr,         // source IP address
+                hdr.ipv4.dst_addr,         // destination IP address
+                hdr.tcp.dst_port,          // destination TCP port
+                hdr.modbus.functionCode    // Modbus function code
+            });
+        }
 
-                        //log_msg("ipv4-totalLen: {}, ihlValue: {}, dataOffsetValue:{}, mbapLen: {},packet-Length: {}", {totalLenValue, ihlValue, dataOffsetValue, mbapLen, packet_length});
+        action compute_tx_fc_id() {
+            // Compute the hash and store it in fClass_id
+            tx_fc_id = crc16_hash.get({
+                hdr.modbus.tx_id,          // Modbus Transaction ID
+                hdr.modbus.functionCode    // Modbus function code
+            });
+        }
 
-                        // Length check
-                        if (mbapLen == hdr.modbus.len) {
-                            if(!modbusCheck.apply().hit) {
-                                drop();
-                                log_msg("Dropping due to invalid FC");
-			                }
+        if (hdr.tcp.isValid()) {
+
+            // Check if only TCP ;
+            if(hdr.ipv4.totalLen <= ((bit<16>)(4*hdr.ipv4.ihl) + (bit<16>)(4*hdr.tcp.dataOffset))){
+                    nop();
+            } else if(hdr.modbus.isValid()) { // Check if Modbus packet
+                    
+                bit<16> totalLenValue = (bit<16>)hdr.ipv4.totalLen;
+                bit<16> ihlValue = 4 * (bit<16>)hdr.ipv4.ihl;
+                bit<16> dataOffsetValue = 4 * (bit<16>)hdr.tcp.dataOffset;
+
+                mbapLen = (bit<16>)packet_length - (ihlValue + dataOffsetValue + 20);
+
+                //log_msg("ipv4-totalLen: {}, ihlValue: {}, dataOffsetValue:{}, mbapLen: {},packet-Length: {}", {totalLenValue, ihlValue, dataOffsetValue, mbapLen, packet_length});
+
+                // Length check
+                if (mbapLen == hdr.modbus.len) {
+                    if(!modbusCheck.apply().hit) {
+                        drop();
+                        //log_msg("Dropping due to invalid FC");
+                    }
+                    // Check if msg is Modbus Request. If so, check arrival rate
+                    if(hdr.tcp.dstPort == 502) {
+                        compute_funcClass_Id();
+
+                        bit<32> arrivalTime = (bit<32>)standard_metadata.ingress_global_timestamp;
+                        bit<32> prevArrTime;
+                        prevArr.read(prevArrTime, (bit<32>)fClass_id);
+                        prevArr.write((bit<32>)fClass_id, arrivalTime);
+
+                        compute_tx_fc_id();
+                        txFcStatus.write((bit<32>)tx_fc_id, arrivalTime);
+
+                        diff =  arrivalTime - prevArrTime;
+
+                        if (diff < UPPERLIMIT) {
+                            drop();
                         }
+
+                        if (diff > UPPERLIMIT && diff < LOWERLIMIT){ //EWMA
+                            bit<32> intervalStartVal;
+                            intervalStart.read(intervalStartVal, (bit<32>)fClass_id);
+
+                            if (arrivalTime - intervalStartVal > INTERVAL) {
+                                intervalStart.write((bit<32>)fClass_id, arrivalTime);
+                                intervalCount.write(fClass_id, 1);
+                            } else {
+                                //intervalStart.write((bit<32>)fClass_id, arrivalTime);
+                                bit<32> intervalCountVal;
+                                
+                                intervalCount.read(intervalCountVal, (bit<32>)fClass_id);
+                                intervalCount.write((bit<32>)fClass_id, intervalCountVal + 1);
+            
+                                // read previous Threshold from register 
+                                bit<32> prevThreshold;
+                                currThreshold.read(prevThreshold, (bit<32>)fClass_id);
+
+                                // calculate new Threshold
+                                // EWMA
+                                tDiff = ((int<32>) intervalCountVal) - ((int<32>) prevThreshold);
+                                tDiff = tDiff >> 4;
+                                newThreshold = prevThreshold + (bit<32>) tDiff;
+
+                                log_msg("newThreshold = {}, prevThreshold = {}, intervalCountVal = {}", {newThreshold, prevThreshold, intervalCountVal});
+
+                                currThreshold.write((bit<32>)fClass_id, newThreshold);
+
+                                if (intervalCountVal + 1 > newThreshold) {
+                                    drop();
+                                }
+                            }
+                        }
+                            
+                        } else if(hdr.tcp.srcPort == 502) {
+                            // Add check for Modbus Response
+                            compute_tx_fc_id();
+                            bit<32> current_timestamp = (bit<32>)standard_metadata.ingress_global_timestamp;
+                            bit<32> req_timestamp;
+                            txFcStatus.read(req_timestamp, (bit<32>)tx_fc_id);
+
+                            log_msg("current_timestamp: {}, req_timestamp: {}, resp_threshold:{}", {current_timestamp, req_timestamp, resp_threshold});
+                            if((current_timestamp - req_timestamp) > resp_threshold){
+                                drop();
+                                log_msg("Dropping due to delayed/unsolicited response");
+                            } else {
+                                nop();
+                            }
+                        }
+                    } else {
+                        // Invalid length, so drop
+                        log_msg("Dropping due to invalid length");
+                        drop();
+
+                    }
+                }
+        }
     }
 }
 
