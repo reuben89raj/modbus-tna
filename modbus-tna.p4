@@ -508,6 +508,86 @@ control SwitchEgress(
     apply {
         #define packet_length = eg_intr_md.pkt_length;
 
+        Register<bit<32>, _>(32w65536) prevArr;             // Previous arrival time register
+        Register<bit<32>, _>(32w65536) intervalStart;        // Interval start register
+        Register<bit<32>, _>(32w65536) intervalCount;        // Interval count register
+        Register<bit<32>, _>(32w65536) currThreshold;        // EWMA threshold register
+        Register<bit<32>, _>(32w65536) txFcStatus;           // Transaction status timestamp register
+
+        // Define Hash Functions
+        Hash<bit<32>>(HashAlgorithm_t.CRC16) hash_funcClass_id;
+        Hash<bit<32>>(HashAlgorithm_t.CRC16) hash_tx_fc_id;
+
+        // RegisterAction to read previous arrival time
+        RegisterAction<bit<32>, _, bit<32>>(prevArr) prevArr_read = {
+        
+            void apply(inout bit<32> value, out bit<32> prevArrTime) {
+                prevArrTime = value; // Read value from register
+            }
+        };
+
+        // RegisterAction to write arrival time
+        RegisterAction<bit<32>, _, bit<32>>(prevArr) prevArr_write = {
+            void apply(inout bit<32> value, in bit<32> newArrTime) {
+                value = newArrTime; // Write new arrival time to register
+            }
+        };
+
+        // RegisterAction to read interval start time
+        RegisterAction<bit<32>, _, bit<32>>(intervalStart) intervalStart_read = {
+            void apply(inout bit<32> value, out bit<32> intervalStartVal) {
+                intervalStartVal = value; // Read interval start value
+            }
+        };
+
+        // RegisterAction to write new interval start time
+        RegisterAction<bit<32>, _, bit<32>>(intervalStart) intervalStart_write = {
+            void apply(inout bit<32> value, in bit<32> newIntervalStart) {
+                value = newIntervalStart; // Write interval start time
+            }
+        };
+
+        // RegisterAction to read interval count
+        RegisterAction<bit<32>, _, bit<32>>(intervalCount) intervalCount_read = {
+            void apply(inout bit<32> value, out bit<32> intervalCountVal) {
+                intervalCountVal = value; // Read interval count
+            }
+        };
+
+        // RegisterAction to increment and write interval count
+        RegisterAction<bit<32>, _, bit<32>>(intervalCount) intervalCount_write = {
+            void apply(inout bit<32> value, in bit<32> newIntervalCount) {
+                value = newIntervalCount; // Write incremented interval count
+            }
+        };
+
+        // RegisterAction to read the current threshold (for EWMA)
+        RegisterAction<bit<32>, _, bit<32>>(currThreshold) currThreshold_read = {
+            void apply(inout bit<32> value, out bit<32> prevThreshold) {
+                prevThreshold = value; // Read the previous threshold
+            }
+        };
+
+        // RegisterAction to update the current threshold (for EWMA)
+        RegisterAction<bit<32>, _, bit<32>>(currThreshold) currThreshold_write = {
+            void apply(inout bit<32> value, in bit<32> newThreshold) {
+                value = newThreshold; // Write the new threshold
+            }
+        };
+
+        // RegisterAction to read transaction status (for Modbus response handling)
+        RegisterAction<bit<32>, _, bit<32>>(txFcStatus) txFcStatus_read = {
+            void apply(inout bit<32> value, out bit<32> req_timestamp) {
+                req_timestamp = value; // Read the request timestamp
+            }
+        };
+
+        // RegisterAction to write transaction status (for Modbus response handling)
+        RegisterAction<bit<32>, _, bit<32>>(txFcStatus) txFcStatus_write = {
+            void apply(inout bit<32> value, in bit<32> current_timestamp) {
+                value = current_timestamp; // Write the current timestamp
+            }
+        };
         // for checking rate of arrival -
         Hash<bit<16>>(HashAlgorithm_t.CRC16) crc16_hash;
 
