@@ -538,14 +538,16 @@ control SwitchEgress(
         RegisterAction<bit<32>, _, bit<32>>(prevArr) prevArr_read = {
         
             void apply(inout bit<32> value, out bit<32> rv) {
-                prevArrTime = value; // Read value from register
+                rv = value; // Read value from register
             }
         };
 
         // RegisterAction to write arrival time
         RegisterAction<bit<32>, _, bit<32>>(prevArr) prevArr_write = {
-            void apply(inout bit<32> value, in bit<32> newArrTime) {
-                value = newArrTime; // Write new arrival time to register
+            void apply(inout bit<32> value, out bit<32> rv) {
+                rv = 0;
+                
+                value = TIMESTAMP; // Write new arrival time to register
             }
         };
 
@@ -671,9 +673,7 @@ control SwitchEgress(
                     compute_tx_fc_id();
                     txFcStatus.write((bit<32>)tx_fc_id, arrivalTime);
 
-                    diff =  arrivalTime - prevArrTime;
-
-                    if (diff < UPPERLIMIT) {
+                    if ((arrivalTime - prevArrTime;) < UPPERLIMIT) {
                         drop();
                     }
 
