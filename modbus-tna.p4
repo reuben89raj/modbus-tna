@@ -278,15 +278,17 @@ parser Tcp_option_parser(packet_in b,
 parser SwitchIngressParser(
     packet_in packet,
     out headers_t hdr, 
-    out my_ingress_metadata_t meta, 
+    out ig_metadata_t meta, 
     out ingress_intrinsic_metadata_t ig_intr_md) 
 {
     bit <1> MB_FLAG = 0;
 
-
     state start {
+        pkt.extract(ig_intr_md);
+        pkt.advance(PORT_METADATA_SIZE);
         transition parse_ethernet;
     }
+
     state parse_ethernet {
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
