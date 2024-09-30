@@ -451,7 +451,7 @@ control SwitchIngress(
 
              // valid flow and function code check
              if(!(flowOut.apply().hit || flowIn.apply().hit || modbusCheck.apply().hit)) {
-                drop();   
+                drop_and_exit();   
              }
          }
           
@@ -525,29 +525,27 @@ control SwitchEgress(
                 
                 bool current_entry_empty = in_value==0
 
-                if(current_entry_empty && timestamp_legitimate)
+                if(current_entry_empty)
                 {
-                    value.lo=0;
-                    value.hi=0;
-                    rv=in_value.hi;
+                    value=0;
+                    rv=in_value;
                 }
             }                                                              
-        };
-
-        // RegisterAction to read previous arrival time
-        RegisterAction<bit<32>, _, bit<32>>(prevArr) prevArr_read = {
-        
-            void apply(inout bit<32> value, out bit<32> rv) {
-                rv = value; // Read value from register
-            }
         };
 
         // RegisterAction to write arrival time
         RegisterAction<bit<32>, _, bit<32>>(prevArr) prevArr_write = {
             void apply(inout bit<32> value, out bit<32> rv) {
                 rv = 0;
+                bit<32> in_value;
+                in_value = value;
+
+                bool current_entry_empty = in_value==0;
                 
-                value = TIMESTAMP; // Write new arrival time to register
+                if(current_entry_empty) {
+                    value=TIMESTAMP;
+                    rv=1;
+                }
             }
         };
 
@@ -647,11 +645,6 @@ control SwitchEgress(
                     drop_and_exit();
                 }
 
-                // Function Code check
-                if(!modbusCheck.apply().hit) {
-                    drop_and_exit();
-                }
-
                 // Check arrival rate/ resp delay based on whehter Modbus Request or Response
                 if(hdr.tcp.dstPort == 502) {
                     compute_funcClass_Id();
@@ -663,6 +656,7 @@ control SwitchEgress(
                     //--bit<32> arrivalTime = (bit<32>)ig_md.ingress_mac_tstamp;
                     bit<32> prevArrTime;
                     bit<32> prevArr_Write;
+                    bit<32> diff;
                     prevArrTime=prevArr_read.execute(ig_md.fClass_id); 
 
                     //--prevArr.read(prevArrTime, (bit<32>)fClass_id);
@@ -673,8 +667,10 @@ control SwitchEgress(
                     compute_tx_fc_id();
                     txFcStatus.write((bit<32>)tx_fc_id, arrivalTime);
 
-                    if ((arrivalTime - prevArrTime;) < UPPERLIMIT) {
-                        drop();
+                    diff = arrivalTime - prevArrTime ;
+
+                    if (diff < UPPERLIMIT) {
+                        drop_and_exit();
                     }
 
                     if (diff > UPPERLIMIT && diff < LOWERLIMIT){ //EWMA
@@ -701,12 +697,10 @@ control SwitchEgress(
                             tDiff = tDiff >> 4;
                             newThreshold = prevThreshold + (bit<32>) tDiff;
 
-                            log_msg("newThreshold = {}, prevThreshold = {}, intervalCountVal = {}", {newThreshold, prevThreshold, intervalCountVal});
-
                             currThreshold.write((bit<32>)fClass_id, newThreshold);
 
                             if (intervalCountVal + 1 > newThreshold) {
-                                drop();
+                                drop_and_exit();
                             }
                         }
                     }
