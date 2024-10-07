@@ -172,7 +172,7 @@ control SwitchIngress(
             exit;
     }
 
- /*   table ipv4_lpm {
+    table ipv4_lpm {
         key = {
             hdr.ipv4.dstAddr: lpm;
         }
@@ -182,7 +182,7 @@ control SwitchIngress(
         }
         size = 256;
         default_action = drop_and_exit();
-    } */
+    }
 
     table flowout {
          key = { 
@@ -229,7 +229,6 @@ control SwitchIngress(
          ig_md.ingress_mac_tstamp = ig_intr_md.ingress_mac_tstamp[31:0];
 
          if (hdr.ipv4.isValid()) {
-             //ipv4_lpm.apply();
 
              // valid flow and function code check
              if (!(flowout.apply().hit)) {
@@ -239,9 +238,8 @@ control SwitchIngress(
                      }
                  }
              }
-          
+        ipv4_lpm.apply();
         }
-         send();
      }
 }
 
@@ -322,8 +320,11 @@ control SwitchEgress(
                     drop_and_exit();
                 }*/
                 
+            } else {
+                drop_and_exit();
             }
-        nop(); 
+        } else {
+            drop_and_exit();
         }
                         
     } 
