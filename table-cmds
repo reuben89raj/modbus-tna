@@ -1,0 +1,20 @@
+p4_modbus_simple
+pipe
+SwitchIngress
+flowin
+add_with_nop(dstAddr="10.0.1.1", srcAddr="10.0.2.2", protocol=6, srcPort=502)
+..
+flowout
+add_with_nop(dstAddr="10.0.2.2", srcAddr="10.0.1.1", protocol=6, dstPort=502)
+..
+ipv4_lpm
+add_with_ipv4_forward(dstAddr="10.0.1.1", port=133)
+add_with_ipv4_forward(dstAddr="10.0.2.2", port=132)
+..
+modbuscheck
+add_with_nop(functionCode=1)
+add_with_nop(functionCode=2)
+add_with_nop(functionCode=4)
+add_with_nop(functionCode=8)
+add_with_nop(functionCode=15)
+dump
