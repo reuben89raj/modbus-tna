@@ -7,7 +7,7 @@
 const bit<16> ETHERTYPE_IPV4 = 0x0800;
 
 typedef bit<48>  EthernetAddress;
-typedef bit<32> len_t;
+typedef bit<32> len_t; 
 
 //== Headers
 
@@ -59,7 +59,7 @@ struct header_t {
     ethernet_t       ethernet;
     ipv4_t           ipv4;
     tcp_t            tcp;
-    modbus_t modbus;
+    modbus_t         modbus;
 }
 
 struct paired_32bit {
@@ -69,7 +69,7 @@ struct paired_32bit {
 
 struct ig_metadata_t {
     bit<32> ingress_mac_tstamp; // ingress timestamp
-  //  bit<32> fClass_id;          // Function Class ID
+  //  bit<32> fClass_id;          // Function Class ID  
   //  bit<32> tx_fc_id;           // Transaction-ID + Function Class
 }
 
@@ -102,13 +102,13 @@ parser TofinoIngressParser(
         packet.advance(PORT_METADATA_SIZE);
         transition accept;
     }
-}
+} 
 
 parser SwitchIngressParser(
     packet_in packet,
-    out header_t hdr,
-    out ig_metadata_t ig_md,
-    out ingress_intrinsic_metadata_t ig_intr_md)
+    out header_t hdr, 
+    out ig_metadata_t ig_md, 
+    out ingress_intrinsic_metadata_t ig_intr_md) 
 {
 
     TofinoIngressParser() tofino_parser;
@@ -135,15 +135,13 @@ parser SwitchIngressParser(
     state parse_tcp {
         packet.extract(hdr.tcp);
         transition select(hdr.tcp.dstPort) {
-           0x01f6: parse_modbus;
+           0x01f6: parse_modbus; 
            default: accept;
         }
     }
     state parse_modbus {
         packet.extract(hdr.modbus);
-        transition select(hdr.modbus.len) {
-          default: accept;
-        }
+        transition accept;
     }
 }
 
@@ -156,6 +154,10 @@ control SwitchIngress(
         in ingress_intrinsic_metadata_from_parser_t ig_intr_prsr_md,
         inout ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md,
         inout ingress_intrinsic_metadata_for_tm_t ig_intr_tm_md) {
+    
+    bool drop_flag1 = false;
+    bool drop_flag2 = false;
+    bool drop_flag3 = false;
 
     action send() {
         /* We hardcode the egress port (all packets towards port 140) */
@@ -178,6 +180,17 @@ control SwitchIngress(
             exit;
     }
 
+    action set_drop1() {
+            drop_flag1=true;
+    }
+
+    action set_drop2() {
+            drop_flag2=true;
+    }
+
+    action set_drop3() {
+            drop_flag3=true;
+    }
     table ipv4_lpm {
         key = {
             hdr.ipv4.dstAddr: exact;
@@ -187,77 +200,83 @@ control SwitchIngress(
             drop_and_exit;
         }
         size = 256;
-        default_action = drop_and_exit();
-    }
+        default_action = drop_and_exit;
+    } 
 
     table flowout {
-         key = {
+         key = { 
                  hdr.ipv4.dstAddr: exact;
                  hdr.ipv4.srcAddr: exact;
                  hdr.ipv4.protocol: exact;
-	         hdr.tcp.dstPort: exact;
+	             hdr.tcp.dstPort: exact;
 		         // direction: exact;
                 }
          actions = {
 		nop;
+        set_drop1;
          }
          size = 256;
-         default_action = nop();
+         default_action = set_drop1;
      }
 
      table flowin {
          key = { hdr.ipv4.dstAddr: exact;
                  hdr.ipv4.srcAddr: exact;
                  hdr.ipv4.protocol: exact;
-		 hdr.tcp.srcPort: exact;
+		         hdr.tcp.srcPort: exact;
 		         // direction: exact;
                 }
          actions = {
 		nop;
+        set_drop2;
          }
          size = 256;
-         default_action = nop();
+         default_action = set_drop2;
      }
 
     table modbuscheck {
-         key = {
+         key = { 
 		hdr.modbus.functionCode: exact;
                 }
          actions = {
 		nop;
+        set_drop3;
          }
          size = 256;
-         default_action = nop();
+         default_action = set_drop3;
      }
 
 
      apply {
-         ig_md.ingress_mac_tstamp = ig_intr_md.ingress_mac_tstamp[31:0];
+         //ig_md.ingress_mac_tstamp = ig_intr_md.ingress_mac_tstamp[31:0];
+        if (hdr.ipv4.isValid()) {
+            flowout.apply();
+            flowin.apply();
+            modbuscheck.apply();
 
-         if (hdr.ipv4.isValid()) {
-
-             // valid flow and function code check
-             if (!(flowout.apply().hit)) {
-                 if (!(flowin.apply().hit)) {
-                     if (!(modbuscheck.apply().hit)) {
-                         drop_and_exit();
-                     }
-                 }
-             }
-             ipv4_lpm.apply();
-        }
-     }
+            if (drop_flag1 && drop_flag2) {
+                drop();  
+            } else if (drop_flag1 || drop_flag2) { 
+                if (drop_flag3) {
+                    drop();
+                } else {
+                    ipv4_lpm.apply();
+                }
+            } 
+    }   
+    }
 }
+
 
 control SwitchIngressDeparser(
         packet_out pkt,
         inout header_t hdr,
         in ig_metadata_t ig_md,
         in ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md) {
-
+         
     // Checksum is not computed yet.
-
-    apply {
+    
+    apply {        
         pkt.emit(hdr.ethernet);
         pkt.emit(hdr.ipv4);
         pkt.emit(hdr.tcp);
@@ -283,7 +302,7 @@ parser SwitchEgressParser(
         packet_in packet,
         out my_egress_headers_t hdr,
         out eg_metadata_t eg_md,
-        out egress_intrinsic_metadata_t eg_intr_md)
+        out egress_intrinsic_metadata_t eg_intr_md) 
 {
     state start {
 	packet.extract(eg_intr_md);
@@ -307,7 +326,7 @@ parser SwitchEgressParser(
     state parse_tcp {
         packet.extract(hdr.tcp);
         transition select(hdr.tcp.dstPort) {
-           0x01f6: parse_modbus;
+           0x01f6: parse_modbus; 
            default: accept;
         }
     }
@@ -340,38 +359,40 @@ control SwitchEgress(
     Hash<bit<32>>(HashAlgorithm_t.IDENTITY) copy32_1;
     Hash<bit<32>>(HashAlgorithm_t.IDENTITY) copy32_2;
 
+    /* Length check
+    Breaking down the following :  mbapLen = eg_intr_md.pkt_length - (4 * hdr.ipv4.ihl + 4 * hdr.tcp.dataOffset + 20) 
+    into separate actions */
+
     #define PACKET_LEN ((bit<32>)eg_intr_md.pkt_length)
     // Action 1: Extract and Cast modbus.len
     action compute_modbus_len_val() {
         eg_md.modbus_len_val = (bit<32>)hdr.modbus.len;
     }
-
+    
     // Action 2: Compute dataOffsetValue
     action compute_dataOffsetValue() {
-        //eg_md.dataOffsetValue = copy32_1.get({26w0 ++ hdr.tcp.dataOffset ++ 2w0});
-        bit<4> dataOffVal = hdr.tcp.dataOffset * 4;
-        eg_md.dataOffsetValue = (bit<32>)dataOffVal;
+        eg_md.dataOffsetValue = copy32_1.get({26w0 ++ hdr.tcp.dataOffset ++ 2w0});
     }
-
+    
     // Action 3: Compute ihlValue
     action compute_ihlValue() {
         eg_md.ihlValue = copy32_2.get({26w0 ++ hdr.ipv4.ihl ++ 2w0});
     }
-
+    
     // Action 4: Compute header_sum
     action compute_header_sum() {
         eg_md.header_sum=(eg_md.ihlValue + eg_md.dataOffsetValue);
     }
-
-    // Action 5: Compute mbapLen
+    
+    // Action 5: Compute mbapLen1
     action compute_mbapLen1() {
-        // Ensure PACKET_LEN is set before this action
         eg_md.mbapLen1 = PACKET_LEN - eg_md.header_sum;
     }
+
+     // Action 5: Compute mbapLen6
     action compute_mbapLen2() {
-        // Ensure PACKET_LEN is set before this action
-        eg_md.mbapLen2 = eg_md.mbapLen1 - 32w20;
-    }
+        eg_md.mbapLen2 = eg_md.mbapLen1 - 32w24;
+    }        
 
     apply {
     if(hdr.modbus.isValid()) {
@@ -381,6 +402,11 @@ control SwitchEgress(
         compute_header_sum();
         compute_mbapLen1();
         compute_mbapLen2();
+       
+        // for debugging length values
+
+        hdr.modbus.tx_id = eg_md.mbapLen2[15:0];
+        hdr.modbus.proto_id = PACKET_LEN[15:0];
 
         bool isLengthValid = (eg_md.mbapLen2 == eg_md.modbus_len_val);
 
@@ -397,7 +423,7 @@ control SwitchEgressDeparser(
         in eg_metadata_t eg_md,
         in egress_intrinsic_metadata_for_deparser_t eg_intr_md_for_dprsr) {
 
-    apply {
+    apply {        
         pkt.emit(hdr.ethernet);
         pkt.emit(hdr.ipv4);
         pkt.emit(hdr.tcp);
