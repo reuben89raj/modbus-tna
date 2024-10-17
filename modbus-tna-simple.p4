@@ -201,6 +201,10 @@ control SwitchIngress(
         }
         size = 256;
         default_action = drop_and_exit;
+        const entries={
+            (0x0A000101): ipv4_forward(0x84);
+            (0x0A000202): ipv4_forward(0x85);
+        }
     } 
 
     table flowout {
@@ -217,6 +221,9 @@ control SwitchIngress(
          }
          size = 256;
          default_action = set_drop1;
+         const entries={
+            (0x0A000202, 0x0A000101, 6, 502): nop();
+         }
      }
 
      table flowin {
@@ -232,6 +239,9 @@ control SwitchIngress(
          }
          size = 256;
          default_action = set_drop2;
+         const entries={
+            (0x0A000101, 0x0A000202, 6, 502): nop();
+         }
      }
 
     table modbuscheck {
@@ -244,6 +254,13 @@ control SwitchIngress(
          }
          size = 256;
          default_action = set_drop3;
+         const entries={
+            (1): nop();
+            (2): nop();
+            (4): nop();
+            (8): nop();
+            (15): nop();
+        }
      }
 
 
@@ -359,9 +376,14 @@ control SwitchEgress(
     Hash<bit<32>>(HashAlgorithm_t.IDENTITY) copy32_1;
     Hash<bit<32>>(HashAlgorithm_t.IDENTITY) copy32_2;
 
-    /* Length check
-    Breaking down the following :  mbapLen = eg_intr_md.pkt_length - (4 * hdr.ipv4.ihl + 4 * hdr.tcp.dataOffset + 20) 
-    into separate actions */
+    /* // Length check
+    Breaking down the following :  
+        mbapLen = eg_intr_md.pkt_length - (4 * hdr.ipv4.ihl + 4 * hdr.tcp.dataOffset + 24) 
+    into separate actions.
+
+    The '24' at the end is because eg_intr_md.pkt_length returns 4 bytes more than what
+    is shown in wireshark. 
+    */
 
     #define PACKET_LEN ((bit<32>)eg_intr_md.pkt_length)
     // Action 1: Extract and Cast modbus.len
@@ -389,10 +411,10 @@ control SwitchEgress(
         eg_md.mbapLen1 = PACKET_LEN - eg_md.header_sum;
     }
 
-     // Action 5: Compute mbapLen6
+     // Action 5: Compute mbapLen2
     action compute_mbapLen2() {
         eg_md.mbapLen2 = eg_md.mbapLen1 - 32w24;
-    }        
+    }
 
     apply {
     if(hdr.modbus.isValid()) {
@@ -403,10 +425,11 @@ control SwitchEgress(
         compute_mbapLen1();
         compute_mbapLen2();
        
-        // for debugging length values
+        /* for debugging length values
 
         hdr.modbus.tx_id = eg_md.mbapLen2[15:0];
         hdr.modbus.proto_id = PACKET_LEN[15:0];
+        */
 
         bool isLengthValid = (eg_md.mbapLen2 == eg_md.modbus_len_val);
 
