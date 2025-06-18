@@ -225,12 +225,11 @@ control SwitchIngress(
                  hdr.ipv4.dstAddr: exact;
                  hdr.ipv4.srcAddr: exact;
                  hdr.ipv4.protocol: exact;
-	             hdr.tcp.dstPort: exact;
-		         // direction: exact;
+	         hdr.tcp.dstPort: exact;
                 }
          actions = {
 		nop;
-        set_drop1;
+                set_drop1;
          }
          size = 256;
          default_action = set_drop1;
@@ -263,7 +262,7 @@ control SwitchIngress(
                 }
          actions = {
 		nop;
-        set_drop3;
+                set_drop3;
          }
          size = 256;
          default_action = set_drop3;
@@ -278,7 +277,6 @@ control SwitchIngress(
 
 
      apply {
-         //ig_md.ingress_mac_tstamp = ig_intr_md.ingress_mac_tstamp[31:0];
         if (hdr.ipv4.isValid()) {
             flowout.apply();
             flowin.apply();
