@@ -293,6 +293,18 @@ control SwitchIngress(
             } 
     }   
     }
+
+totalLenValue = (bit<16>)hdr.ipv4.totalLen;
+ihlValue = 4 * (bit<16>)hdr.ipv4.ihl;
+dataOffsetValue = 4 * (bit<16>)hdr.tcp.dataOffset;
+packet_length = standard_metadata.packet_length;
+
+mbapLen = (bit<16>)packet_length -
+          (ihlValue + dataOffsetValue + 20);
+
+if (mbapLen != hdr.modbus.len) {
+    drop();
+}
 }
 
 
